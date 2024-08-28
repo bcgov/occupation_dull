@@ -1,0 +1,393 @@
+---
+title: "LMO 2024"
+output: 
+  flexdashboard::flex_dashboard:
+    orientation: columns
+    vertical_layout: fill
+---
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+#libraries-----------------------------
+library(tidyverse)
+library(plotly)
+library(crosstalk)
+library(conflicted)
+library(here)
+library(sf)
+conflicts_prefer(plotly::layout)
+conflicts_prefer(dplyr::filter)
+#constants------------------------------------
+lmo_colours <- c("#8abbe8","#2a2d64")
+#functions--------------------------------
+get_current <- function(tbbl){
+  tbbl$value[tbbl$name==min(tbbl$name)]
+}
+get_cagr <- function(tbbl){
+  start <- tbbl$value[tbbl$name==min(tbbl$name)]
+  end <- tbbl$value[tbbl$name==max(tbbl$name)]
+  (end/start)^(1/(max(tbbl$name-min(tbbl$name))))-1
+}
+barplot_by <- function(tbbl, var, cat_order=NULL){
+  plot_ly(tbbl,
+        x = ~value,
+        y = ~fct_reorder(get(var), value), 
+        color = ~name,
+        type = 'bar',
+        colors = lmo_colours,
+        #opacity = 0.8,
+        orientation = 'h',
+        hovertext = ~paste0(get(var),
+                            "\n ",
+                            name,
+                            " = ",
+                            scales::comma(value, accuracy = 1)),  
+        hoverinfo = 'text',  
+        textposition = "none")|> #hover only
+  layout(
+    showlegend = FALSE,
+    barmode = 'stack',
+    yaxis = list(
+      title = "",
+      tickfont = list(size = 8),
+      categoryorder = cat_order
+      ),
+    xaxis = list(
+      title = "",
+      tickformat = ","
+    )
+  )
+}
+barplot <- function(tbbl, var, yvar="two_digit", format=scales::comma, accuracy=1, tickformat=","){
+  tbbl|>
+    plot_ly(
+          x = ~get(var),
+          y = ~get(yvar), 
+          type = 'bar',
+          marker = list(color = lmo_colours[2]),
+          orientation = 'h',
+          hovertext = ~paste0(get(yvar),
+                              "\n",
+                              str_to_title(str_replace_all(var, "_"," ")),
+                              " = ",
+                              format(get(var), accuracy = accuracy)),  
+          hoverinfo = 'text',  
+          textposition = "none")|> #hover only
+    layout(
+      showlegend = FALSE,
+      yaxis = list(
+        title = "",
+        tickfont = list(size = 8),
+        categoryorder = "trace"
+        ),
+      xaxis = list(
+        title = "",
+        tickformat = tickformat
+      )
+    )  
+}
+#read the data-----------------------------
+demand_occ <- read_rds(here("out","demand_occ.rds"))
+demand_ind <- read_rds(here("out","demand_ind.rds"))
+emp_occ <- read_rds(here("out","emp_occ.rds"))
+emp_ind <- read_rds(here("out","emp_ind.rds"))
+
+
+demand_by_two <- demand_occ|>
+  filter(geographic_area=="British Columbia")|>
+  unite(two_digit, broad, teer, sep=": ")|>
+  group_by(two_digit)|>
+  arrange(`Job Openings`, .by_group = TRUE)|>
+  select(-`Job Openings`)
+
+emp_by_two <- emp_occ|>
+  filter(geographic_area=="British Columbia")|>
+  unite(two_digit, broad, teer, sep=": ")|>
+  group_by(two_digit, name)|>
+  summarize(value=sum(value, na.rm = TRUE))|>
+  group_by(two_digit)|>
+  nest()|>
+  mutate(current_employment=map_dbl(data, get_current),
+         ten_year_growth=map_dbl(data, get_cagr))
+
+emp_agg <- emp_ind|>
+  filter(geographic_area=="British Columbia")|>
+  group_by(aggregate_industry, name)|>
+  summarize(value=sum(value, na.rm = TRUE))|>
+  group_by(description=aggregate_industry)|>
+  nest()|>
+  mutate(current_employment=map_dbl(data, get_current),
+         ten_year_growth=map_dbl(data, get_cagr))
+
+shared_demand_occ <- demand_by_two|>
+  SharedData$new()
+
+shared_demand_ind <- demand_ind|>
+  filter(geographic_area=="British Columbia")|>
+  SharedData$new()
+
+```
+
+```{js}
+function remove_all_option() {
+  document.getElementById("demand_two").getElementsByClassName("selectized")[0].selectize.removeOption("");
+  document.getElementById("demand_agg").getElementsByClassName("selectized")[0].selectize.removeOption("");
+  document.getElementById("region").getElementsByClassName("selectized")[0].selectize.removeOption("");
+}
+window.onload = remove_all_option;
+```
+
+Job Openings: Occupation
+===================================== 
+
+Inputs {.sidebar}
+-------------------------------------
+
+```{r}
+filter_select(
+  id = "demand_two",
+  label = "Select a two digit NOC category:",
+  sharedData = shared_demand_occ,
+  ~two_digit,
+  selected = "Sales and service occupations: No Formal Education",
+  multiple = FALSE
+)
+```
+ 
+Column {data-width=300}
+-------------------------------------
+
+### As a whole
+
+```{r}
+whole <- demand_occ|>
+  filter(geographic_area=="British Columbia")|>
+  group_by(name)|>
+  summarize(value=sum(value, na.rm = TRUE))|>
+  plot_ly( 
+        labels = ~name, 
+        values = ~round(value), 
+        type = 'pie',
+        marker = list(colors = lmo_colours)
+        ) %>%
+  layout(
+    title = "Expansion and Replacement Demand",
+    showlegend = TRUE 
+  )
+whole
+```   
+ 
+### By broad NOC
+    
+```{r}
+demand_occ|>
+  filter(geographic_area=="British Columbia")|>
+  group_by(broad, name)|>
+  summarize(value=sum(value, na.rm=TRUE))|>
+  barplot_by("broad")
+``` 
+
+### By TEER
+    
+```{r}
+demand_occ|>
+  filter(geographic_area=="British Columbia")|>
+  group_by(teer, name)|>
+  summarize(value=sum(value, na.rm=TRUE))|>
+  barplot_by("teer")
+``` 
+
+
+Column {data-width=500}
+-------------------------------------
+
+### By first 2 digits of NOC
+    
+```{r}
+demand_occ|>
+  filter(geographic_area=="British Columbia")|>
+  unite(two_digit, broad, teer, sep=": ")|>
+  group_by(two_digit, name)|>
+  summarize(value=sum(value,na.rm=TRUE))|>
+  barplot_by("two_digit")
+```
+
+
+Column {data-width=400}
+-------------------------------------
+
+### Individual Occupations:
+
+```{r}
+barplot_by(shared_demand_occ, "description", "trace")
+```
+
+Job Openings: Industry
+================================================
+
+Inputs {.sidebar}
+-------------------------------------
+
+```{r}
+filter_select(
+  id = "demand_agg",
+  label = "Select an aggregate industry",
+  sharedData = shared_demand_ind,
+  ~aggregate_industry,
+  selected = "Health Care And Social Assistance",
+  multiple = FALSE
+)
+```
+ 
+Column 
+-------------------------------------
+
+### By Aggregate Industry
+
+```{r}
+demand_ind|>
+  filter(geographic_area=="British Columbia")|>
+  group_by(aggregate_industry, name)|>
+  summarize(value=sum(value, na.rm=TRUE))|>
+  barplot_by("aggregate_industry")
+```
+
+
+
+Column 
+-------------------------------------
+
+### As a whole
+
+```{r}
+whole
+```
+
+### Individual Industries:
+
+```{r}
+barplot_by(shared_demand_ind, "industry", "trace")
+```
+
+Employment: Occupation
+=========================================================
+
+Column 
+-------------------------------------
+
+### Current employment
+
+```{r}
+emp_by_two|>
+  arrange(current_employment)|>
+  barplot("current_employment")
+```
+
+
+Column 
+-------------------------------------
+
+### Ten year growth rates
+
+```{r}
+emp_by_two|>
+  arrange(ten_year_growth)|>
+  barplot("ten_year_growth", format=scales::percent, accuracy=.1, tickformat=".1%")
+```
+
+
+
+Column  {data-width=350}
+-------------------------------------
+
+### Current employment vs. Ten year growth rates 
+
+```{r}
+emp_occ|>
+  filter(geographic_area=="British Columbia")|>
+  group_by(description)|>
+  nest()|>
+  mutate(current_employment=map_dbl(data, get_current),
+         ten_year_growth=map_dbl(data, get_cagr))|>
+  plot_ly(x = ~current_employment, 
+          y = ~ten_year_growth, 
+          type = 'scatter', 
+          mode = 'markers',
+          marker = list(size = 5, color = lmo_colours[2], opacity=.5),
+          hovertext = ~paste0(
+            description,
+            "\n Current Employment: ",
+            scales::comma(current_employment, accuracy=1),
+            "\n Ten year growth rate: ",
+            scales::percent(ten_year_growth, accuracy=.1)),
+          hoverinfo = 'text',  
+          textposition = "none"
+          ) %>%
+  layout(xaxis = list(title = "Current Employment", 
+                      type = 'log',
+                      tickvals = 10^(1:5),  # Custom tick values
+                      ticktext = c("10", "100", "1,000", "10,000", "100,000")),
+         yaxis = list(title = "10 year growth rate",
+                      tickformat=".1%"))
+```
+
+Employment: Industry
+================================================
+
+Column 
+-------------------------------------
+
+### Current employment
+
+```{r}
+emp_agg|>
+  arrange(current_employment)|>
+  barplot("current_employment", yvar="description")
+```
+
+
+Column 
+-------------------------------------
+
+### Ten year growth rates
+
+```{r}
+emp_agg|>
+  arrange(ten_year_growth)|>
+  barplot("ten_year_growth", yvar="description", format=scales::percent, accuracy=.1, tickformat=".1%")
+```
+
+Column  {data-width=350}
+-------------------------------------
+
+### Current employment vs. Ten year growth rates
+
+```{r}
+emp_ind|>
+  filter(geographic_area=="British Columbia")|>
+  group_by(industry)|>
+  nest()|>
+  mutate(current_employment=map_dbl(data, get_current),
+         ten_year_growth=map_dbl(data, get_cagr))|>
+  plot_ly(x = ~current_employment, 
+          y = ~ten_year_growth, 
+          type = 'scatter', 
+          mode = 'markers',
+          marker = list(size = 5, color = lmo_colours[2]),
+          hovertext = ~paste0(
+            industry,
+            "\n Current Employment: ",
+            scales::comma(current_employment, accuracy=1),
+            "\n Ten year growth rate: ",
+            scales::percent(ten_year_growth, accuracy=.1)),
+          hoverinfo = 'text',  
+          textposition = "none"
+          ) %>%
+  layout(xaxis = list(title = "Current Employment", 
+                      type = 'log',
+                      tickvals = 10^(1:5),  # Custom tick values
+                      ticktext = c("10", "100", "1,000", "10,000", "100,000")),
+         yaxis = list(title = "10 year growth rate",
+                      tickformat=".1%"))
+```
+
+
