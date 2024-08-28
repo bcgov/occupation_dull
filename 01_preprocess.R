@@ -28,6 +28,7 @@ read_excel(here("data","demand_occupation.xlsx"), skip = 3)|>
   group_by(broad, teer)|>
   arrange(`Job Openings`, .by_group = TRUE)|>
   pivot_longer(cols=contains("Demand"))|>
+  mutate(geographic_area=str_replace_all(geographic_area, "&", "and"))|>
   write_rds(here("out","demand_occ.rds"))
 
 #demand by industry--------------------------------------
@@ -39,18 +40,19 @@ read_excel(here("data","demand_industry.xlsx"), skip = 3)|>
   filter(variable %in% c("Expansion Demand", "Replacement Demand", "Job Openings"))|>
   group_by(industry, variable, geographic_area)|>
   summarize(value=sum(value))|>
-  fuzzyjoin::stringdist_full_join(industry_mapping)|> #names do not match
+  fuzzyjoin::stringdist_full_join(industry_mapping)|> #names do not match exactly
   ungroup()|>
   select(industry=industry.y, aggregate_industry, geographic_area, variable, value)|>
   pivot_wider(names_from = variable, values_from = value)|>
   group_by(aggregate_industry, geographic_area)|>
   arrange(`Job Openings`, .by_group = TRUE)|>
   pivot_longer(cols=contains("Demand"))|>
+  mutate(geographic_area=str_replace_all(geographic_area, "&", "and"))|>
   write_rds(here("out","demand_ind.rds"))
 
 #employment by occupation----------------------------
 
-read_excel(here("data","employment_occupation.xlsx"), skip = 3)|>
+employment_education <- read_excel(here("data","employment_occupation.xlsx"), skip = 3)|>
   remove_constant()|>
   pivot_longer(cols=starts_with("2"))|>
   mutate(name=as.numeric(name))|>
@@ -61,11 +63,14 @@ read_excel(here("data","employment_occupation.xlsx"), skip = 3)|>
   full_join(noc_teer)|>
   ungroup()|>
   select(-broad_num, -teer_num, -noc)|>
-  write_rds(here("out", "emp_occ.rds"))
+  mutate(geographic_area=str_replace_all(geographic_area, "&", "and"))
+
+#'need to extract first year employment level and 10year cagr for various levels of aggregation
+#' (cant do this post filtering in app)
 
 #employment by industry--------------------------------------------
 
-read_excel(here("data","employment_industry.xlsx"), skip = 3)|>
+employment_industry <- read_excel(here("data","employment_industry.xlsx"), skip = 3)|>
   remove_constant()|>
   pivot_longer(cols=starts_with("2"))|>
   mutate(name=as.numeric(name))|>
@@ -73,4 +78,4 @@ read_excel(here("data","employment_industry.xlsx"), skip = 3)|>
   fuzzyjoin::stringdist_full_join(industry_mapping)|> #names do not match
   ungroup()|>
   select(industry=industry.y, aggregate_industry, geographic_area, name, value)|>
-  write_rds(here("out", "emp_ind.rds"))
+  mutate(geographic_area=str_replace_all(geographic_area, "&", "and"))
