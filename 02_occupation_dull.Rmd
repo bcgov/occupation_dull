@@ -13,21 +13,11 @@ library(plotly)
 library(crosstalk)
 library(conflicted)
 library(here)
-library(sf)
-library(tidytext)
 conflicts_prefer(plotly::layout)
 conflicts_prefer(dplyr::filter)
 #constants------------------------------------
 lmo_colours <- c("#8abbe8","#2a2d64")
 #functions--------------------------------
-get_current <- function(tbbl){
-  tbbl$value[tbbl$name==min(tbbl$name)]
-}
-get_cagr <- function(tbbl){
-  start <- tbbl$value[tbbl$name==min(tbbl$name)]
-  end <- tbbl$value[tbbl$name==max(tbbl$name)]
-  (end/start)^(1/(max(tbbl$name-min(tbbl$name))))-1
-}
 barplot_by <- function(tbbl, var, cat_order=NULL){
   plot_ly(tbbl,
         x = ~value,
@@ -36,10 +26,12 @@ barplot_by <- function(tbbl, var, cat_order=NULL){
         type = 'bar',
         orientation = 'h',
         hovertext = ~paste0(get(var),
-                            "\n ",
+                            "\n Job Openings: ",
+                            scales::comma(`Job Openings`, accuracy=1),
+                            "\n",
                             name,
-                            " = ",
-                            scales::comma(value, accuracy = 1)),  
+                            ": ",
+                            scales::comma(value, accuracy=1)),
         hoverinfo = 'text',  
         textposition = "none")|> #hover only
   layout(
@@ -69,7 +61,6 @@ barplot <- function(tbbl, var, yvar="two_digit", format=scales::comma, accuracy=
           x = ~get(var),
           y = ~get(yvar), 
           type = 'bar',
-          marker = list(color = lmo_colours[2]),
           orientation = 'h',
           hovertext = ~paste0(get(yvar),
                               "\n",
@@ -92,47 +83,13 @@ barplot <- function(tbbl, var, yvar="two_digit", format=scales::comma, accuracy=
     )  
 }
 #read the data-----------------------------
-demand_occ <- read_rds(here("out","demand_occ.rds"))
-#demand_ind <- read_rds(here("out","demand_ind.rds"))
-
-#shareddata objects for job openings by occupation------------------------------------
-shared_for_pie <- demand_occ|>
-  group_by(name, geographic_area)|>
-  summarize(value=sum(value, na.rm = TRUE))|>
-  SharedData$new(~geographic_area, group="region1")
-
-shared_broad <- demand_occ|>
-  group_by(broad, geographic_area, name)|>
-  summarize(value=sum(value, na.rm=TRUE),
-            `Job Openings`=sum(`Job Openings`, na.rm = TRUE))|>
-  ungroup()|>
-  arrange(geographic_area, `Job Openings`)|>
-  SharedData$new(~geographic_area, group="region1")
-
-shared_teer <- demand_occ|>
-  group_by(teer, geographic_area, name)|>
-  summarize(value=sum(value, na.rm=TRUE),
-            `Job Openings`=sum(`Job Openings`, na.rm = TRUE))|>
-  ungroup()|>
-  arrange(geographic_area, `Job Openings`)|>
-  SharedData$new(~geographic_area, group="region1")
-
-shared_two <- demand_occ|>
-  group_by(geographic_area, teer, broad, name)|>
-  summarize(value=sum(value, na.rm=TRUE),
-            `Job Openings`=sum(`Job Openings`, na.rm = TRUE))|>
-  ungroup()|>
-  arrange(geographic_area, teer, `Job Openings`)|>
-  unite(two_digit, broad, teer, sep=": ")|>
-  SharedData$new(~geographic_area, group="region1")
-
-shared_demand_occ <- demand_occ|>
-  ungroup()|>
-  arrange(geographic_area, broad, teer, `Job Openings`)|>
-  SharedData$new(~interaction(geographic_area, broad, teer))
-
-#shareddata objects for job openings by industry
-
+shared_for_pie <- read_rds(here("out","shared_for_pie.rds"))
+shared_broad <- read_rds(here("out","shared_broad.rds"))
+shared_teer <- read_rds(here("out","shared_teer.rds"))
+shared_two <- read_rds(here("out","shared_two.rds"))
+shared_demand_occ <- read_rds(here("out","shared_demand_occ.rds"))
+shared_demand_ind <- read_rds(here("out","shared_demand_ind.rds"))
+shared_demand_ind_agg <- read_rds(here("out","shared_demand_ind_agg.rds"))
 
 ```
 
@@ -142,6 +99,7 @@ function remove_all_option() {
   document.getElementById("teer").getElementsByClassName("selectized")[0].selectize.removeOption("");
   document.getElementById("broad").getElementsByClassName("selectized")[0].selectize.removeOption("");
   document.getElementById("region_both").getElementsByClassName("selectized")[0].selectize.removeOption("");
+  document.getElementById("region_jo_ind").getElementsByClassName("selectized")[0].selectize.removeOption("");
 }
 window.onload = remove_all_option;
 ```
@@ -174,7 +132,14 @@ shared_for_pie|>
   plot_ly( 
         labels = ~name, 
         values = ~round(value), 
-        type = 'pie'
+        type = 'pie',
+        hovertext = ~paste0("\n Job Openings: ",
+                            scales::comma(`Job Openings`, accuracy=1),
+                            "\n",
+                            name,
+                            ": ",
+                            scales::comma(value, accuracy=1)),
+        hoverinfo = 'text'
         )
 ```   
  
@@ -244,7 +209,7 @@ Column
 
 ### Individual Occupations:
 
-```{r}
+```{r, fig.retina=2}
 shared_demand_occ|>
   barplot_by("description", "trace")
 ```
@@ -256,14 +221,14 @@ Inputs {.sidebar}
 -------------------------------------
 
 ```{r}
-# filter_select(
-#   id = "demand_agg",
-#   label = "Select an aggregate industry",
-#   sharedData = shared_demand_ind,
-#   ~aggregate_industry,
-#   selected = "Health Care And Social Assistance",
-#   multiple = FALSE
-# )
+filter_select(
+  id = "region_jo_ind",
+  label = "Select a region:",
+  sharedData = shared_demand_ind,
+  ~geographic_area,
+  selected = "British Columbia",
+  multiple = FALSE
+)
 ```
  
 Column 
@@ -272,28 +237,18 @@ Column
 ### By Aggregate Industry
 
 ```{r}
-# demand_ind|>
-#   filter(geographic_area=="British Columbia")|>
-#   group_by(aggregate_industry, name)|>
-#   summarize(value=sum(value, na.rm=TRUE))|>
-#   barplot_by("aggregate_industry")
+shared_demand_ind_agg|>
+   barplot_by("aggregate_industry", "trace")
 ```
-
-
 
 Column 
 -------------------------------------
 
-### As a whole
+### LMO Industries
 
 ```{r}
-
-```
-
-### Individual Industries:
-
-```{r}
-# barplot_by(shared_demand_ind, "industry", "trace")
+shared_demand_ind|>
+  barplot_by("industry", "trace")
 ```
 
 Employment: Occupation
